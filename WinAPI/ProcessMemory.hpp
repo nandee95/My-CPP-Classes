@@ -30,6 +30,7 @@ SOFTWARE.
 #include <Psapi.h>
 #include <tlhelp32.h>
 
+/// <summary> Opens a process for memory reading and writing. </summary>
 class ProcessMemory
 {
 protected:
@@ -43,7 +44,7 @@ public:
 	const bool OpenByWindowTitle(const std::string title)
 	{
 		//Find window by title
-		HWND hwnd=FindWindow(NULL, title.c_str());
+		HWND hwnd = FindWindow(NULL, title.c_str());
 		if (hwnd == NULL) return false;
 
 		//Obtain process id
@@ -56,6 +57,47 @@ public:
 		return handle == NULL;
 	}
 
+	/// <summary> Opens the process by executable name </summary>
+	/// <param name="title"> Name of the executable </param>
+	/// <returns> True on success </returns>
+	const bool OpenByExecutableName(const std::string executable)
+	{
+		//Query list of processes
+		HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, NULL);
+		if (snap == INVALID_HANDLE_VALUE) return NULL;
+
+		PROCESSENTRY32 entry;
+		entry.dwSize = sizeof(entry);
+		pid = NULL;
+
+		//Loop through each process
+		if (Process32First(snap, &entry))
+		{
+			do
+			{
+				if (executable.compare(entry.szExeFile) == 0)
+				{
+					pid = entry.th32ProcessID;
+					break;
+				}
+			} while (Process32Next(snap, &entry));
+		}
+
+		//Close handle
+		CloseHandle(snap);
+
+		//Open the process
+		if (pid != NULL) handle = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_QUERY_INFORMATION, FALSE, pid);
+		return handle == NULL;
+	}
+
+	/// <summary> Closes the process. </summary>
+	/// <returns> True on success </returns>
+	const bool Close()
+	{
+		return CloseHandle(handle);
+	}
+
 	/// <summary> Finds the address of the given module. </summary>
 	/// <param name="module"> Name of the module </param>
 	/// <returns> Module address, 0 on fail </returns>
@@ -65,7 +107,7 @@ public:
 		//Query list of modules
 		HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
 		if (snap == INVALID_HANDLE_VALUE) return NULL;
-		
+
 		MODULEENTRY32 entry;
 		entry.dwSize = sizeof(entry);
 		//Loop through each module
@@ -80,7 +122,7 @@ public:
 				}
 			} while (Module32Next(snap, &entry));
 		}
-		
+
 		//Close handle
 		CloseHandle(snap);
 		return result;
@@ -92,11 +134,11 @@ public:
 	/// <param name="pointers"> List of multi-level pointers (Optional) </param>
 	/// <returns> True on success </returns>
 	template <typename T>
-	inline const bool ReadMemoryValue(T& result, uint64_t address, const std::initializer_list<uint64_t> pointers = {}) const
-{
+	inline const bool ReadMemoryValue(T & result, uint64_t address, const std::initializer_list<uint64_t> pointers = {}) const
+	{
 		//Simple read if no multi level pointers
 		if (pointers.size() == 0) return ReadProcessMemory(handle, (void*)address, &result, sizeof(result), NULL);
-		
+
 		//Read start address
 		if (!ReadProcessMemory(handle, (void*)address, &address, sizeof(address), NULL)) return false;
 
