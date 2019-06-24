@@ -1,6 +1,7 @@
 /*
 Licensed under the MIT license
 Copyright (c) 2019 Nandor Szalma
+Github: https://github.com/nandee95/My_CPP_Classes
 
 Permission is hereby  granted, free of charge, to any  person obtaining a copy
 of this software and associated  documentation files (the "Software"), to deal
@@ -37,12 +38,13 @@ protected:
 	HANDLE handle = NULL; //Process handle
 	DWORD pid = NULL; //Process id
 public:
-
 	/// <summary> Opens the process by window title </summary>
 	/// <param name="title"> Title of the window </param>
 	/// <returns> True on success </returns>
 	const bool OpenByWindowTitle(const std::string title)
 	{
+		handle = NULL;
+		pid = NULL;
 		//Find window by title
 		HWND hwnd = FindWindow(NULL, title.c_str());
 		if (hwnd == NULL) return false;
@@ -54,7 +56,7 @@ public:
 
 		//Open process
 		handle = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_QUERY_INFORMATION, FALSE, pid);
-		return handle == NULL;
+		return handle != NULL;
 	}
 
 	/// <summary> Opens the process by executable name </summary>
@@ -62,6 +64,8 @@ public:
 	/// <returns> True on success </returns>
 	const bool OpenByExecutableName(const std::string executable)
 	{
+		handle = NULL;
+		pid = NULL;
 		//Query list of processes
 		HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, NULL);
 		if (snap == INVALID_HANDLE_VALUE) return NULL;
@@ -75,7 +79,9 @@ public:
 		{
 			do
 			{
-				if (executable.compare(entry.szExeFile) == 0)
+				const std::string current = entry.szExeFile;
+				//Case insensitive comparision
+				if (std::equal(executable.begin(), executable.end(), current.begin(), current.end(), [](const char& a, const char& b) { return std::tolower(a) == std::tolower(b);  }))
 				{
 					pid = entry.th32ProcessID;
 					break;
@@ -87,15 +93,27 @@ public:
 		CloseHandle(snap);
 
 		//Open the process
-		if (pid != NULL) handle = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_QUERY_INFORMATION, FALSE, pid);
-		return handle == NULL;
+		if (pid != NULL) handle = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_QUERY_INFORMATION | PROCESS_TERMINATE, FALSE, pid);
+		return handle != NULL;
 	}
 
-	/// <summary> Closes the process. </summary>
+	/// <summary> Terminates the process and closes the handle. </summary>
+	/// <returns> True on success </returns>
+	const bool Terminate(const uint32_t exitcode = EXIT_SUCCESS)
+	{
+		const bool result = TerminateProcess(handle, exitcode);
+		Close();
+		return result;
+	}
+
+	/// <summary> Closes the process handle. </summary>
 	/// <returns> True on success </returns>
 	const bool Close()
 	{
-		return CloseHandle(handle);
+		pid = NULL;
+		const bool result = CloseHandle(handle);
+		handle = NULL;
+		return handle;
 	}
 
 	/// <summary> Finds the address of the given module. </summary>
@@ -115,7 +133,9 @@ public:
 		{
 			do
 			{
-				if (module.compare(entry.szModule) == 0)
+				const std::string current = entry.szModule;
+				//Case insensitive comparision
+				if (std::equal(module.begin(), module.end(), current.begin(), current.end(), [](const char& a, const char& b) { return std::tolower(a) == std::tolower(b);  }))
 				{
 					result = (uint64_t)entry.modBaseAddr;
 					break;
@@ -154,6 +174,27 @@ public:
 		return ReadProcessMemory(handle, (void*)address, &result, sizeof(result), NULL);
 	}
 
+	template <typename T>
+	inline const bool ReadMemoryArray(T * result, size_t len, uint64_t address, const std::initializer_list<uint64_t> pointers = {}) const
+	{
+		//Simple read if no multi level pointers
+		if (pointers.size() == 0) return ReadProcessMemory(handle, (void*)address, result, len, NULL);
+
+		//Read start address
+		if (!ReadProcessMemory(handle, (void*)address, &address, sizeof(address), NULL)) return false;
+
+		//Loop through the pointers
+		for (auto it = pointers.begin(); it != std::prev(pointers.end()); it++)
+		{
+			address += *it;
+			if (!ReadProcessMemory(handle, (void*)address, &address, sizeof(address), NULL)) return false;
+		}
+
+		//Read from last address to the result
+		address += *std::prev(pointers.end());
+		return ReadProcessMemory(handle, (void*)address, result, len, NULL);
+	}
+
 	/// <summary> Modifies the memory of the process. </summary>
 	/// <param name="value"> Value to write </param>
 	/// <param name="address"> Base address </param>
@@ -184,7 +225,7 @@ public:
 	/// <returns> State of the handle. </returns>
 	inline const bool IsValid() const
 	{
-		DWORD ec;
+		static DWORD ec;
 		GetExitCodeProcess(handle, &ec);
 		return ec == STILL_ACTIVE;
 	}
